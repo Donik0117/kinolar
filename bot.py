@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import logging
 import json
 import os
@@ -15,6 +15,8 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
 BOT_TOKEN = "8755506600:AAE2u8_hwneCbHt2F_Arp-BySl1PWWCqjiA"
+ADMIN_ID = 7899678090  # Sizning Telegram ID raqamingiz
+
 DB_FILE = os.path.expanduser("~/catalog_db.json")
 
 logging.basicConfig(level=logging.INFO)
@@ -39,29 +41,38 @@ class AddMovieState(StatesGroup):
     desc = State()
     video = State()
 
-def get_main_menu():
+def get_main_menu(is_admin: bool = False):
     kb = [
         [KeyboardButton(text="🎬 Kinolar"), KeyboardButton(text="🍿 Anime")],
         [KeyboardButton(text="🧸 Multfilmlar"), KeyboardButton(text="📺 Seriallar")],
         [KeyboardButton(text="🔥 Trendlar"), KeyboardButton(text="⭐ Eng yaxshi")],
-        [KeyboardButton(text="🔎 Qidirish"), KeyboardButton(text="➕ Kino qo'shish")]
+        [KeyboardButton(text="🔎 Qidirish")]
     ]
+    # Faqat adminga ko'rinadigan tugma
+    if is_admin:
+        kb.append([KeyboardButton(text="➕ Kino qo'shish (Admin)")])
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
 @dp.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
+    is_admin = (message.from_user.id == ADMIN_ID)
+    greeting = " (Admin 👑)" if is_admin else ""
     await message.answer(
-        f"👋 Assalomu alaykum, <b>{message.from_user.first_name}</b>!\n\n"
+        f"👋 Assalomu alaykum, <b>{message.from_user.first_name}{greeting}</b>!\n\n"
         f"🎬 <b>Cinema Bot</b>ga xush kelibsiz!\n"
-        f"Kinoni tanlasangiz, bot darhol videoni shu yerga yuboradi 🍿",
-        reply_markup=get_main_menu()
+        f"Kinoni tanlang va tomosha qiling 🍿",
+        reply_markup=get_main_menu(is_admin)
     )
 
-# --- KINO QO'SHISH ---
-@dp.message(F.text == "➕ Kino qo'shish")
+# --- FAQAT ADMIN UCHUN KINO QO'SHISH ---
+@dp.message(F.text == "➕ Kino qo'shish (Admin)")
 @dp.message(Command("add"))
 async def start_add_movie(message: Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID:
+        await message.answer("❌ Kechirasiz, siz admin emassiz! Faqat bot egasi kino qo'sha oladi.")
+        return
+
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎬 Kino", callback_data="addcat_movies"), InlineKeyboardButton(text="🍿 Anime", callback_data="addcat_anime")],
         [InlineKeyboardButton(text="🧸 Multfilm", callback_data="addcat_cartoons"), InlineKeyboardButton(text="📺 Serial", callback_data="addcat_series")],
@@ -71,10 +82,13 @@ async def start_add_movie(message: Message, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("addcat_"))
 async def set_category(call: CallbackQuery, state: FSMContext):
+    if call.from_user.id != ADMIN_ID:
+        await call.answer("Ruxsat yo'q", show_alert=True)
+        return
     cat = call.data.split("_")[1]
     await state.update_data(category=cat)
     await state.set_state(AddMovieState.title)
-    await call.message.edit_text("1️⃣ Kino (anime/serial) <b>nomini</b> yozing:")
+    await call.message.edit_text("1️⃣ Kino <b>nomini</b> yozing:")
 
 @dp.message(AddMovieState.title)
 async def set_title(message: Message, state: FSMContext):
@@ -92,7 +106,7 @@ async def set_year(message: Message, state: FSMContext):
 async def set_genre(message: Message, state: FSMContext):
     await state.update_data(genre=message.text.strip())
     await state.set_state(AddMovieState.desc)
-    await message.answer("4️⃣ Qisqacha <b>tavsif</b> yozing:")
+    await message.answer("4️⃣ Qisqacha <b>tavsifi</b>:")
 
 @dp.message(AddMovieState.desc)
 async def set_desc(message: Message, state: FSMContext):
@@ -100,7 +114,7 @@ async def set_desc(message: Message, state: FSMContext):
     await state.set_state(AddMovieState.video)
     await message.answer(
         "5️⃣ Endi kino <b>VIDEOSINI</b> yuboring!\n\n"
-        "<i>Telegramdagi video faylni to'g'ridan-to'g'ri yuboring yoki boshqa kanaldan forward (uzatish) qilib tashlang.</i>"
+        "<i>(Video faylni to'g'ridan-to'g'ri yuboring yoki kanaldan forward qilib tashlang)</i>"
     )
 
 @dp.message(AddMovieState.video)
@@ -114,7 +128,7 @@ async def set_video(message: Message, state: FSMContext):
         video_id = message.document.file_id
         is_document = True
     else:
-        await message.answer("⚠️ Iltimos, video fayl yuboring (havola emas, aynan video fayl yoki document)!")
+        await message.answer("⚠️ Iltimos, video fayl yuboring!")
         return
 
     data = await state.get_data()
@@ -139,9 +153,8 @@ async def set_video(message: Message, state: FSMContext):
 
     await state.clear()
     await message.answer(
-        f"🎉 <b>«{new_item['title']}» muvaffaqiyatli saqlandi!</b>\n"
-        f"Endi kinoni tanlaganingizda bot uni to'g'ridan-to'g'ri chiqarib beradi.",
-        reply_markup=get_main_menu()
+        f"🎉 <b>«{new_item['title']}» muvaffaqiyatli saqlandi!</b>",
+        reply_markup=get_main_menu(is_admin=True)
     )
 
 @dp.callback_query(F.data == "cancel_add")
@@ -149,7 +162,7 @@ async def cancel_add(call: CallbackQuery, state: FSMContext):
     await state.clear()
     await call.message.edit_text("❌ Bekor qilindi.")
 
-# --- KINO RO'YXATI VA TO'G'RIDAN-TO'G'RI YUBORISH ---
+# --- KINO RO'YXATI VA TOMOSHA QILISH ---
 def get_items_keyboard(items):
     buttons = []
     for item in items:
@@ -167,11 +180,10 @@ async def show_category(message: Message):
     cat_key = mapping[message.text]
     items = CATALOG.get(cat_key, [])
     if not items:
-        await message.answer(f"{message.text} bo'limi hozircha bo'sh. «➕ Kino qo'shish» orqali video yuklang!")
+        await message.answer(f"{message.text} bo'limi hozircha bo'sh.")
         return
     await message.answer(f"<b>{message.text} ro'yxati:</b>\n<i>Kerakli kinoni tanlang:</i>", reply_markup=get_items_keyboard(items))
 
-# TO'G'RIDAN-TO'G'RI VIDEONI YUBORISH
 @dp.callback_query(F.data.startswith("sendvideo_"))
 async def send_movie_video(call: CallbackQuery):
     item_id = int(call.data.split("_")[1])
@@ -186,7 +198,7 @@ async def send_movie_video(call: CallbackQuery):
         f"🎬 <b>{item['title']}</b> ({item.get('year', '')})\n"
         f"🏷 Janr: {item.get('genre', '')}\n\n"
         f"📝 {item.get('desc', '')}\n\n"
-        f"🍿 <i>Marhamat, maroqli tomosha tilaymiz!</i>"
+        f"🍿 <i>Maroqli tomosha tilaymiz!</i>"
     )
 
     await call.message.answer("Marhamat, kino yuborilmoqda... ⏳")
@@ -196,8 +208,7 @@ async def send_movie_video(call: CallbackQuery):
         else:
             await call.message.answer_video(video=item["video_id"], caption=caption)
     except Exception as e:
-        await call.message.answer(f"Videoni yuborishda xatolik: {e}")
-    
+        await call.message.answer(f"Xatolik: {e}")
     await call.answer()
 
 @dp.message(F.text == "🔥 Trendlar")
@@ -231,7 +242,7 @@ async def search_handler(message: Message):
     await message.answer(f"🔍 <b>«{message.text}» bo'yicha topilgan kinolar:</b>", reply_markup=get_items_keyboard(results))
 
 async def main():
-    print("Bot yangilandi! Endi kino bosilishi bilan video botga yuboriladi.")
+    print("Bot ishga tushdi!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
