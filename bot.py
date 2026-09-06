@@ -2,6 +2,7 @@ import asyncio
 import logging
 import json
 import os
+from aiohttp import web
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.state import State, StatesGroup
@@ -48,7 +49,6 @@ def get_main_menu(is_admin: bool = False):
         [KeyboardButton(text="🔥 Trendlar"), KeyboardButton(text="⭐ Eng yaxshi")],
         [KeyboardButton(text="🔎 Qidirish")]
     ]
-    # Faqat adminga ko'rinadigan tugma
     if is_admin:
         kb.append([KeyboardButton(text="➕ Kino qo'shish (Admin)")])
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
@@ -112,10 +112,7 @@ async def set_genre(message: Message, state: FSMContext):
 async def set_desc(message: Message, state: FSMContext):
     await state.update_data(desc=message.text.strip())
     await state.set_state(AddMovieState.video)
-    await message.answer(
-        "5️⃣ Endi kino <b>VIDEOSINI</b> yuboring!\n\n"
-        "<i>(Video faylni to'g'ridan-to'g'ri yuboring yoki kanaldan forward qilib tashlang)</i>"
-    )
+    await message.answer("5️⃣ Endi kino <b>VIDEOSINI</b> yuboring:")
 
 @dp.message(AddMovieState.video)
 async def set_video(message: Message, state: FSMContext):
@@ -241,7 +238,23 @@ async def search_handler(message: Message):
         return
     await message.answer(f"🔍 <b>«{message.text}» bo'yicha topilgan kinolar:</b>", reply_markup=get_items_keyboard(results))
 
+# RENDER PORTI UCHUN DUMMY WEB SERVER
+async def handle_ping(request):
+    return web.Response(text="Bot is running!")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get("/", handle_ping)
+    app.router.add_get("/health", handle_ping)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get("PORT", 8080))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logging.info(f"Web server started on port {port}")
+
 async def main():
+    await start_web_server()
     print("Bot ishga tushdi!")
     await dp.start_polling(bot)
 
