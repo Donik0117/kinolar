@@ -16,23 +16,38 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
 BOT_TOKEN = "8755506600:AAE2u8_hwneCbHt2F_Arp-BySl1PWWCqjiA"
-ADMIN_ID = 7899678090  # Sizning Telegram ID raqamingiz
-
-DB_FILE = os.path.expanduser("~/catalog_db.json")
+ADMIN_ID = 7899678090        # Sizning Telegram ID
+CHANNEL_ID = -1004388295526  # Kino Baza kanal ID
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 
-if os.path.exists(DB_FILE):
-    with open(DB_FILE, "r", encoding="utf-8") as f:
-        CATALOG = json.load(f)
-else:
-    CATALOG = {"movies": [], "anime": [], "cartoons": [], "series": []}
+# Xotiradagi kino katalogi
+CATALOG = {"movies": [], "anime": [], "cartoons": [], "series": []}
 
-def save_db():
-    with open(DB_FILE, "w", encoding="utf-8") as f:
-        json.dump(CATALOG, f, ensure_ascii=False, indent=2)
+# Kanaldan barcha kinolarni qayta yuklab olish
+async def load_from_channel():
+    global CATALOG
+    CATALOG = {"movies": [], "anime": [], "cartoons": [], "series": []}
+    try:
+        # Kanaldagi so'nggi 200 ta xabarni tekshirib bazani tiklaydi
+        async for message in bot.get_chat_history(chat_id=CHANNEL_ID, limit=200):
+            if message.caption and "---KINOBOT_DATA---" in message.caption:
+                try:
+                    data_str = message.caption.split("---KINOBOT_DATA---")[1].strip()
+                    item = json.loads(data_str)
+                    cat = item.get("category", "movies")
+                    if cat not in CATALOG:
+                        CATALOG[cat] = []
+                    # Takrorlanmasligi uchun
+                    if not any(x["id"] == item["id"] for x in CATALOG[cat]):
+                        CATALOG[cat].append(item)
+                except Exception as e:
+                    logging.error(f"Xatolik parslashda: {e}")
+        logging.info(f"Kanaldan yuklandi! Jami kinolar: {sum(len(v) for v in CATALOG.values())}")
+    except Exception as e:
+        logging.error(f"Kanal bilan bog'lanishda xatolik: {e}")
 
 class AddMovieState(StatesGroup):
     category = State()
@@ -70,7 +85,7 @@ async def cmd_start(message: Message, state: FSMContext):
 @dp.message(Command("add"))
 async def start_add_movie(message: Message, state: FSMContext):
     if message.from_user.id != ADMIN_ID:
-        await message.answer("❌ Kechirasiz, siz admin emassiz! Faqat bot egasi kino qo'sha oladi.")
+        await message.answer("❌ Kechirasiz, siz admin emassiz!")
         return
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -134,6 +149,7 @@ async def set_video(message: Message, state: FSMContext):
 
     new_item = {
         "id": new_id,
+        "category": data["category"],
         "title": data["title"],
         "year": data.get("year", ""),
         "genre": data.get("genre", ""),
@@ -142,15 +158,32 @@ async def set_video(message: Message, state: FSMContext):
         "is_document": is_document
     }
 
+    # Kanaldagi xabarga yashirin ma'lumotni qo'shib post qilamiz
+    channel_caption = (
+        f"🎬 <b>{new_item['title']}</b> ({new_item['year']})\n"
+        f"🏷 Janr: {new_item['genre']}\n\n"
+        f"📝 {new_item['desc']}\n\n"
+        f"---KINOBOT_DATA---\n{json.dumps(new_item, ensure_ascii=False)}"
+    )
+
+    try:
+        if is_document:
+            await bot.send_document(chat_id=CHANNEL_ID, document=video_id, caption=channel_caption)
+        else:
+            await bot.send_video(chat_id=CHANNEL_ID, video=video_id, caption=channel_caption)
+    except Exception as e:
+        await message.answer(f"⚠️ Kanalga yuklashda xatolik yuz berdi: {e}\n(Bot kanalga admin qilinganligini tekshiring!)")
+        return
+
     cat = data["category"]
     if cat not in CATALOG:
         CATALOG[cat] = []
     CATALOG[cat].append(new_item)
-    save_db()
 
     await state.clear()
     await message.answer(
-        f"🎉 <b>«{new_item['title']}» muvaffaqiyatli saqlandi!</b>",
+        f"🎉 <b>«{new_item['title']}» kanalga va bazaga abadiy saqlandi!</b>\n"
+        f"Endi bot o'chib yonsa ham bu kino aslo o'chib ketmaydi!",
         reply_markup=get_main_menu(is_admin=True)
     )
 
@@ -177,7 +210,7 @@ async def show_category(message: Message):
     cat_key = mapping[message.text]
     items = CATALOG.get(cat_key, [])
     if not items:
-        await message.answer(f"{message.text} bo'limi hozircha bo'sh.")
+        await message.answer(f"{message.text} bo'limi hozircha bo'sh. Kino qo'shishingiz mumkin!")
         return
     await message.answer(f"<b>{message.text} ro'yxati:</b>\n<i>Kerakli kinoni tanlang:</i>", reply_markup=get_items_keyboard(items))
 
@@ -238,24 +271,24 @@ async def search_handler(message: Message):
         return
     await message.answer(f"🔍 <b>«{message.text}» bo'yicha topilgan kinolar:</b>", reply_markup=get_items_keyboard(results))
 
-# RENDER PORTI UCHUN DUMMY WEB SERVER
+# Render porti uchun web server
 async def handle_ping(request):
-    return web.Response(text="Bot is running!")
+    return web.Response(text="Bot is live with Channel Database!")
 
 async def start_web_server():
     app = web.Application()
     app.router.add_get("/", handle_ping)
-    app.router.add_get("/health", handle_ping)
     runner = web.AppRunner(app)
     await runner.setup()
     port = int(os.environ.get("PORT", 8080))
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
-    logging.info(f"Web server started on port {port}")
 
 async def main():
     await start_web_server()
-    print("Bot ishga tushdi!")
+    print("Kanaldan bazani yuklash boshlandi...")
+    await load_from_channel()
+    print("Bot to'liq ishga tushdi!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
